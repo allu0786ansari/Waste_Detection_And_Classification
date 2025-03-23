@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+openvino
+openvino-dev[onnx]
+numpy
+opencv-python
+pillow
+python-multipart
