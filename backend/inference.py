@@ -1,15 +1,14 @@
 from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import Response
 import cv2
 import numpy as np
 import openvino as ov
+from io import BytesIO
 from pathlib import Path
-import shutil
-import json
 
-app = FastAPI()
 
 # Load OpenVINO model
-MODEL_PATH = "models/best_model_waste_detection.xml"  # Path to FP16 or FP32 model
+MODEL_PATH = "models/best_model_waste_detection.xml"
 core = ov.Core()
 model = core.read_model(MODEL_PATH)
 compiled_model = core.compile_model(model, "CPU")
@@ -28,23 +27,32 @@ CLASS_LABELS = [
     "Nose-mouth masks"
 ]
 
-def detect_objects(file_path, media_type="image"):
-    if media_type == "image":
-        return detect_from_image(file_path)
-    elif media_type == "video":
-        return detect_from_video(file_path)
 
-def detect_from_image(image_path):
-    image = cv2.imread(image_path)
+def detect_from_image(image):
+    """Preprocess image, run inference, and draw bounding boxes."""
+
+    # Resize image to match model input shape
     h, w = image.shape[:2]
+    input_shape = (640, 640)  # Update this based on your model's expected input size
+    resized_image = cv2.resize(image, input_shape)  # Resize to match model input size
 
-    input_blob = np.expand_dims(image.transpose(2, 0, 1), axis=0)
-    result = compiled_model([input_blob])[0]
+    # Convert image to match model input format
+    input_blob = np.expand_dims(resized_image.transpose(2, 0, 1), axis=0)  # [1, C, H, W]
+    input_blob = input_blob.astype(np.float32) / 255.0  # Normalize if required by model
 
-    boxes, scores, labels = [], [], []
-    for detection in result[0]:  # [1, num_detections, 6]
-        conf = detection[4]
-        if conf > 0.4:
+
+    # Perform inference
+    results = compiled_model([input_blob])[0]  
+
+    # Check if detections exist
+    if results is None or results.shape[1] == 0:
+        print("No objects detected!")
+        return image  # Return original image if no objects found
+
+    # Loop through detections
+    for detection in results[0]:  # Assuming output shape [1, num_detections, 6]
+        conf = detection[4]  # Confidence score
+        if conf > 0.1:  # Adjust confidence threshold if needed
             x_center, y_center, width, height = detection[:4]
             x_min = int((x_center - width / 2) * w)
             y_min = int((y_center - height / 2) * h)
@@ -54,41 +62,9 @@ def detect_from_image(image_path):
             class_id = int(detection[5])
             class_label = CLASS_LABELS[class_id] if class_id < len(CLASS_LABELS) else "unknown"
 
-            boxes.append([x_min, y_min, x_max, y_max])
-            scores.append(float(conf))
-            labels.append(class_label)
+            #Draw bounding box
+            cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+            cv2.putText(image, f"{class_label} ({conf:.2f})", (x_min, y_min - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-    return {"boxes": boxes, "scores": scores, "labels": labels}
-
-def detect_from_video(video_path):
-    cap = cv2.VideoCapture(video_path)
-    results = []
-
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        h, w = frame.shape[:2]
-        input_blob = np.expand_dims(frame.transpose(2, 0, 1), axis=0)
-        result = compiled_model([input_blob])[0]
-
-        frame_results = []
-        for detection in result[0]:  # [1, num_detections, 6]
-            conf = detection[4]
-            if conf > 0.4:
-                x_center, y_center, width, height = detection[:4]
-                x_min = int((x_center - width / 2) * w)
-                y_min = int((y_center - height / 2) * h)
-                x_max = int((x_center + width / 2) * w)
-                y_max = int((y_center + height / 2) * h)
-
-                class_id = int(detection[5])
-                class_label = CLASS_LABELS[class_id] if class_id < len(CLASS_LABELS) else "unknown"
-
-                frame_results.append({"box": [x_min, y_min, x_max, y_max], "label": class_label, "score": conf})
-        
-        results.append(frame_results)
-
-    cap.release()
-    return {"frames": results}
+    return image  #Return image with bounding boxes
