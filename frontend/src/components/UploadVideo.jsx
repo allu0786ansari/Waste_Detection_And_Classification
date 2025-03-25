@@ -13,7 +13,8 @@ const UploadVideo = () => {
     if (!file) return;
 
     const response = await uploadVideo(file);
-    setResults(response);
+    const videoURL = URL.createObjectURL(response);
+    setResults(videoURL);
   };
 
   return (
@@ -37,7 +38,10 @@ const UploadVideo = () => {
       {results && (
         <div className="results-container">
           <h3>Detection Results:</h3>
-          <pre>{JSON.stringify(results, null, 2)}</pre>
+          <video controls width="500">
+            <source src={results} type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
         </div>
       )}
     </div>
